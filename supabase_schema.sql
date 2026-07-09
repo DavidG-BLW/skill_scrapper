@@ -7,6 +7,9 @@ create table if not exists reports (
   theme_label text,
   filename text,
   ai_analysis jsonb, -- Almacena el análisis consolidado por IA (resumen ejecutivo, recomendaciones, etc.)
+  subject_config jsonb, -- OBLIGATORIA: aísla los datos de cada sujeto (subjectName, keywords, ownedAccounts...).
+                         -- Sin esta columna, el insert con subject_config falla en silencio y toda
+                         -- lectura filtrada por sujeto (hasScraped, fetchWindowPosts) devuelve vacío.
   created_at timestamptz default now()
 );
 
