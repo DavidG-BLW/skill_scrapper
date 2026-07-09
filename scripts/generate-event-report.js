@@ -62,13 +62,13 @@ async function runPrepare(argv) {
   }
   const subjectConfig = loadSubjectConfigFromCli(argv);
 
-  const { prompt, cands, cfg, query: q, to: toResolved } = await prepareEventReport({
+  const { prompt, cands, cfg, query: q, to: toResolved, ownedPosts, ownedCommentsByPost } = await prepareEventReport({
     apifyToken: process.env.APIFY_TOKEN || null,
     query, from, to, subjectConfig, emit,
   });
 
   const contextPath = path.resolve(context);
-  fs.writeFileSync(contextPath, JSON.stringify({ cands, cfg, query: q, to: toResolved }, null, 2));
+  fs.writeFileSync(contextPath, JSON.stringify({ cands, cfg, query: q, to: toResolved, ownedPosts, ownedCommentsByPost }, null, 2));
 
   console.log(`\n✓ Contexto guardado en: ${contextPath}`);
   console.log(`  (${cands.length} piezas candidatas)`);
