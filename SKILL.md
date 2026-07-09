@@ -4,7 +4,7 @@ description: >
   Scrapea datos públicos de social listening (Facebook, Instagram, X, TikTok, Google News) vía
   Apify para un sujeto configurable, los filtra a un evento/momento específico, y genera un
   "Reporte de evento" con el branding de Blackwell Strategy como .docx con diseño fijo (fuentes
-  Fraunces/Geist, paleta tinta/oro/azul, 7 secciones fijas). El texto del análisis ejecutivo lo
+  Fraunces/Geist, paleta tinta/oro/azul, 8 secciones fijas). El texto del análisis ejecutivo lo
   redacta el propio agente de Claude que invoca la skill (sin llamar a ningún LLM externo). Úsala
   cuando el usuario pida scrapear/analizar la reacción social a un evento para una persona o
   marca y entregarlo como reporte Blackwell, o invoque /skill_scrapper. Siempre entrega
@@ -20,7 +20,7 @@ Dado un sujeto (persona/marca) y un evento específico en una ventana de fechas,
 2. Filtra las menciones a las que realmente ligan al sujeto con el evento (no solo al sujeto, no solo al evento).
 3. Baja comentarios de las piezas top y detecta señales de engagement inorgánico/bot.
 4. Le entrega al agente (tú) un prompt con todos esos datos — **tú** redactas el análisis ejecutivo estructurado, sin llamar a ningún LLM externo.
-5. Renderiza ese análisis en un `.docx` usando el diseño exacto de Blackwell Strategy — mismas fuentes, colores, layout y estructura de 7 secciones siempre.
+5. Renderiza ese análisis en un `.docx` usando el diseño exacto de Blackwell Strategy — mismas fuentes, colores, layout y estructura de 8 secciones siempre (Método, Resumen Ejecutivo, Volumen y Alcance, Narrativas Dominantes, Lectura de Sentimiento, Riesgos y Recomendaciones, Preguntas y Respuestas Sugeridas, Voz en sus Redes Propias). La última solo se incluye si el sujeto tiene `ownedAccounts` configurado y publicó algo en la ventana — si no, esa sección se omite sin error.
 
 **El diseño es fijo y nunca debe improvisarse ni alterarse.** Solo cambia el contenido entre reportes. Si te piden "hacer un reporte" para cualquier sujeto/evento, esta skill es el único camino — no escribas a mano un docx con un estilo distinto.
 
@@ -32,7 +32,7 @@ Corre una vez por entorno: `npm install` dentro del directorio de esta skill (in
 
 Variables de entorno necesarias:
 - `APIFY_TOKEN` — token personal de Apify. Solo lo requiere `prepare` si la ventana de fechas pedida no está ya scrapeada y en caché en Supabase.
-- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` — un proyecto de Supabase con las tablas `reports`, `scraped_posts`, `scraped_comments` (la tabla `reports` necesita la columna `subject_config jsonb`: `alter table reports add column if not exists subject_config jsonb;`). Supabase se usa para cachear los datos scrapeados por fecha+sujeto, así que volver a correr un reporte (o scrapear una ventana de varios días) no le vuelve a pagar a Apify por el mismo día dos veces.
+- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` — un proyecto de Supabase ya creado (con sus tablas `reports`, `scraped_posts`, `scraped_comments` y la columna `subject_config jsonb` en `reports`, que aísla los datos de cada sujeto). El esquema se crea manualmente fuera de esta skill — el agente solo recibe las credenciales ya listas, nunca crea ni migra tablas. Supabase se usa para cachear los datos scrapeados por fecha+sujeto, así que volver a correr un reporte (o scrapear una ventana de varios días) no le vuelve a pagar a Apify por el mismo día dos veces.
 
 `OPENROUTER_API_KEY` **no se usa** en esta skill. El texto del reporte lo escribes tú, el agente que la invoca.
 

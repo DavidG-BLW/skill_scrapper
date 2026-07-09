@@ -9,8 +9,9 @@ TikTok y Google News vía Apify, filtra a las menciones que realmente ligan al s
 evento, baja comentarios de las piezas top (con detección de señales de bot/inflado), le entrega
 los datos al agente de Claude que la invoca para que redacte el análisis ejecutivo (sin llamar a
 ningún LLM externo), y renderiza el resultado en un `.docx` de diseño fijo: fuentes Fraunces/Geist,
-paleta tinta/oro/azul, 7 secciones (Método, Resumen Ejecutivo, Volumen y Alcance, Narrativas
-Dominantes, Lectura de Sentimiento, Riesgos y Recomendaciones, Preguntas y Respuestas Sugeridas).
+paleta tinta/oro/azul, 8 secciones (Método, Resumen Ejecutivo, Volumen y Alcance, Narrativas
+Dominantes, Lectura de Sentimiento, Riesgos y Recomendaciones, Preguntas y Respuestas Sugeridas,
+Voz en sus Redes Propias — esta última solo aparece si el sujeto publicó algo propio en la ventana).
 
 El diseño viene de `scripts/report-docx.js` — un port directo del generador de reportes
 original de Blackwell. Es fijo a propósito: solo cambia el contenido, nunca el layout.
