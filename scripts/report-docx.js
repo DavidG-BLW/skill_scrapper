@@ -149,6 +149,10 @@ export async function buildReportDocx(data){
         new TableCell({width:{size:7320,type:WidthType.DXA},borders:{bottom:{style:BorderStyle.SINGLE,size:4,color:last?'FFFFFF':BD2}},margins:{top:110,bottom:110,left:140,right:140},children:(f.respuesta||[]).map(p=>new Paragraph({spacing:{after:p.after??0},children:runs(p.runs,{s:19})}))}),
       ]})); });
     body.push(new Table({width:{size:W,type:WidthType.DXA},columnWidths:[2760,7320],rows})); }
+  // 08 Voz en sus redes propias (comentarios de su comunidad en sus propios posts)
+  if (data.redesPropias) { body.push(...section('08', data.redesPropias.tag||'VOZ EN SUS REDES PROPIAS', data.redesPropias.sub));
+    if (data.redesPropias.intro) body.push(para(data.redesPropias.intro,{after:100}));
+    (data.redesPropias.cards||[]).forEach((c,ci)=>{ if (ci>0) body.push(spacer(80)); body.push(narrCard(c)); }); }
 
   const doc = new Document({
     styles:{ default:{ document:{ run:{ font:SANS, size:21, color:BODY } } } },
