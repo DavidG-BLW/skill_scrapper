@@ -13,7 +13,7 @@ import { normalizeSubjectConfig, relevanceMatcher, ownedUsernamesToExclude } fro
 const MESES = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
 const strip = s => (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 const dateRange = (from, to) => { const out=[]; let d=new Date(from+'T12:00:00Z'); const end=new Date(to+'T12:00:00Z'); while(d<=end){ out.push(d.toISOString().slice(0,10)); d.setUTCDate(d.getUTCDate()+1); } return out; };
-const STOP = new Set(['vs','contra','de','del','la','el','los','las','en','y','a','partido','evento','mundial','2026','con','por']);
+const STOP = new Set(['vs','contra','de','del','la','el','los','las','en','y','a','partido','evento','con','por']);
 
 function keywordsFrom(query){
   const words = strip(query).split(/[^a-z0-9]+/).filter(w => w.length>=4 && !STOP.has(w));
@@ -49,6 +49,14 @@ async function fetchWindowPosts(dates, subjectName){
   return Object.values(byUrl);
 }
 
+async function fetchCommentsForPostIds(postIds){
+  if(!postIds.length) return {};
+  const { data } = await supabase.from('scraped_comments').select('*').in('post_id', postIds);
+  const byPost = {};
+  for(const c of (data||[])) (byPost[c.post_id] ||= []).push(c);
+  return byPost;
+}
+
 async function latestResumen(toDate, subjectName){
   let q = supabase.from('reports').select('date_key,ai_analysis')
     .eq('theme_key','resumen').lte('date_key',toDate).not('ai_analysis','is',null);
@@ -67,7 +75,7 @@ function commentSignal(comments){
   return { n, topAuthor: sorted[0][0], topCount: sorted[0][1], topShare: Math.round(sorted[0][1]/n*100), emojiPct: Math.round(emoji/n*100) };
 }
 
-function buildPrompt({ query, from, to, cands, commentsByUrl, signalByUrl, ctx, cfg }){
+function buildPrompt({ query, from, to, cands, commentsByUrl, signalByUrl, ctx, cfg, ownedPosts, ownedCommentsByPost, ownedSignalByPost }){
   const name = cfg.subjectName;
   let out = `Eres analista senior de reputacion y crisis para ${name} (Blackwell Strategy). Redacta un REPORTE ejecutivo, honesto, factual y bien escrito, SOLO sobre lo que liga a ${name} con el evento "${query}" (ventana ${from} a ${to}). El lector es el cliente; tono profesional, directo, sin relleno.\n\n`;
   out += `REGLAS DURAS:\n`;
@@ -78,8 +86,12 @@ function buildPrompt({ query, from, to, cands, commentsByUrl, signalByUrl, ctx, 
   out += `- SEÑALES DE BOTS/INFLADO: cada pieza trae una linea SEÑAL con % de comentarios de una sola cuenta y % emoji-only. Si topShare es alto (>=35%) o emojiPct alto (>=50%), trata ese "apoyo" como NO organico y decláralo explicitamente en el reporte (narrativa y riesgos).\n`;
   out += `- TONO por pieza: Positivo | Negativo | Reproche | Burla | Neutral | Critico. Se preciso, no pongas todo "Neutral".\n`;
   out += `- Si el volumen es bajo, dilo claramente (es un hallazgo valido, no lo infles).\n`;
-  out += `- CARDS de comentario: la meta debe usar los datos DEL COMENTARIO (\"RED · @autor_del_comentario · N likes\"), nunca las metricas del post.\n\n`;
+  out += `- CARDS de comentario: la meta debe usar los datos DEL COMENTARIO (\"RED · @autor_del_comentario · N likes\"), nunca las metricas del post.\n`;
+  out += `- Los posts listados en "PUBLICACIONES PROPIAS" son la voz del propio ${name}, no reaccion de terceros. Resume el tono de SU COMUNIDAD (los que comentan ahi) solo en el campo "redes_propias" — nunca los mezcles con "piezas" ni "narrativas" de reaccion publica.\n\n`;
   if(ctx?.ai_analysis?.sentimiento){ const s=ctx.ai_analysis.sentimiento; out += `CONTEXTO (ultimo panorama ${ctx.date_key}): favorable ${s.favorable}% / neutral ${s.neutral}% / critico ${s.critico}%, riesgo ${ctx.ai_analysis.nivel_riesgo||'?'}. Usalo solo como telon de fondo.\n\n`; }
+  if (!cands.length) {
+    out += `PIEZAS CANDIDATAS: NINGUNA. No se encontró reacción pública (terceros) que ligue a ${name} con "${query}" en esta ventana. Deja "piezas" y "narrativas" como arreglos vacíos y declara el volumen nulo explícitamente en "metodo" y "resumen" — es un hallazgo válido, no lo rellenes ni inventes piezas.\n`;
+  } else {
   out += `PIEZAS CANDIDATAS (elige SOLO las realmente relevantes a ${name}+evento; para la tabla usa su URL tal cual):\n`;
   cands.forEach((p,i)=>{
     out += `#${i+1} url:${p.url} | ${p.platform} | @${p.username} | ${(p.published_date||'').slice(0,10)} | likes:${p.likes} comentarios_declarados:${p.comments_count} vistas:${p.views}\n`;
@@ -89,6 +101,18 @@ function buildPrompt({ query, from, to, cands, commentsByUrl, signalByUrl, ctx, 
     const cm = commentsByUrl[p.url];
     if(cm?.length){ out += `   comentarios: ` + cm.slice(0,20).map(c=>`@${c.author}(${c.likes||0}likes):"${(c.text||'').replace(/\s+/g,' ').slice(0,140)}"`).join(' | ') + `\n`; }
   });
+  }
+  if (ownedPosts?.length) {
+    out += `\nPUBLICACIONES PROPIAS DE ${name} EN LA VENTANA (con comentarios reales de su comunidad; NO son reaccion de terceros, son su propia voz — usalos SOLO para el campo "redes_propias"):\n`;
+    ownedPosts.forEach((p,i)=>{
+      out += `#P${i+1} url:${p.url} | ${p.platform} | ${(p.published_date||'').slice(0,10)} | likes:${p.likes} vistas:${p.views}\n`;
+      out += `   texto: "${(p.text||'').replace(/\s+/g,' ').slice(0,200)}"\n`;
+      const sg = ownedSignalByPost?.[p.id];
+      if(sg) out += `   SEÑAL comentarios: ${sg.n} captados · cuenta top @${sg.topAuthor} aporta ${sg.topCount} (${sg.topShare}%) · emoji-only ${sg.emojiPct}%\n`;
+      const cm = ownedCommentsByPost?.[p.id];
+      if(cm?.length) out += `   comentarios: ` + cm.slice(0,15).map(c=>`@${c.author}(${c.likes||0}likes):"${(c.text||'').replace(/\s+/g,' ').slice(0,140)}"`).join(' | ') + `\n`;
+    });
+  }
   out += `\nDevuelve SOLO JSON valido (sin markdown fuera de los campos). Usa **negritas** dentro de los textos para enfatizar 1-2 frases clave. Estructura EXACTA:\n`;
   out += `{
  "titulo_evento": "nombre MUY corto del evento, max 4 palabras, SIN parentesis ni sufijos (ej: 'México vs Inglaterra', NO 'México vs Inglaterra (Mundial 2026) — Menciones a ${name}')",
@@ -99,7 +123,8 @@ function buildPrompt({ query, from, to, cands, commentsByUrl, signalByUrl, ctx, 
  "narrativas": [ {"titulo":"**A · Nombre**: subtitulo","color":"blue|gold|red","intro":"1-2 frases","cards":[ {"label":"ETIQUETA MONO CORTA","quote":"cita textual completa","meta":"RED · @autor · N likes (del comentario o post citado)","accent":"blue|gold|red","metaIcon":"ig|tt|fb"} ]} ],
  "sentimiento_sub":"titular con **negritas**", "sentimiento":"2-3 frases; si el apoyo positivo no es organico (bots), dilo aqui",
  "riesgos":[ {"lead":"Titulo corto. ","rest":"detalle accionable"} ],
- "qa":[ {"tema":"pregunta/tema probable","respuesta":"linea de mensaje sugerida, lista para usar"} ]
+ "qa":[ {"tema":"pregunta/tema probable","respuesta":"linea de mensaje sugerida, lista para usar"} ],
+ "redes_propias": ${ownedPosts?.length ? `{"sub":"titular corto con **negritas** sobre el tono en sus redes propias","intro":"1-2 frases sobre como reacciono SU COMUNIDAD en sus propios posts","cards":[ {"label":"ETIQUETA MONO CORTA","quote":"cita textual completa de un comentario real en sus posts propios","meta":"RED · @autor · N likes","accent":"blue|gold|red"} ]}` : 'null (no hubo publicaciones propias en esta ventana)'}
 }
 Guia: 2-4 narrativas, cada una con 1-3 cards. Colores: azul=positivo/neutro, oro=matiz/fragil, rojo=negativo/alerta. Si hay bots, incluye una card o riesgo rojo que lo señale.`;
   return out;
@@ -161,6 +186,11 @@ export function finalizeEventReportData({ query, to, analysis, cands, cfg }){
     riesgos:{ sub:[{t:'Riesgos y '},{t:'recomendaciones',b:true},{t:'.'}], bullets:(analysis.riesgos||[]).map(b=>({ lead:b.lead||'', rest:b.rest||'' })) },
     qa:{ sub:[{t:'Líneas de mensaje '},{t:'ante coyuntura',b:true},{t:'.'}],
       filas:(analysis.qa||[]).map(f=>({ tema:f.tema||'', respuesta:[ {runs:mdRuns(f.respuesta)} ] })) },
+    redesPropias: analysis.redes_propias ? {
+      sub: mdRuns(analysis.redes_propias.sub),
+      intro: [{t:analysis.redes_propias.intro||''}],
+      cards: (analysis.redes_propias.cards||[]).map(c=>({ accent:c.accent||'blue', label:c.label||'', quote:c.quote||'', meta:c.meta||'', metaIcon:c.metaIcon })),
+    } : null,
     _stats:{ piezas:chosen.length, reacciones:nReacc, comentarios:nCom, vistas:nViews },
   };
 }
@@ -191,11 +221,22 @@ export async function prepareEventReport({ apifyToken, query, from, to, subjectC
   const owned = p => ownedSet.has((p.username||'').trim().toLowerCase().replace(/^@/,''));
   let cands = posts.filter(p => inWin(p) && !owned(p) && subject(p) && kws.some(k => strip(p.text).includes(k)))
     .sort((a,b)=>reach(b)-reach(a));
+
+  // Posts propios del sujeto en la ventana (para la sección "Voz en sus redes propias"),
+  // con los comentarios que ya se scrapearon y guardaron junto con ellos (sin llamar a Apify de nuevo).
+  const seenOwned = new Set();
+  let ownedPosts = posts.filter(p => inWin(p) && owned(p))
+    .filter(p => { const k=p.url||p.id; if(seenOwned.has(k)) return false; seenOwned.add(k); return true; })
+    .sort((a,b)=>reach(b)-reach(a)).slice(0,10);
+  const ownedCommentsByPost = await fetchCommentsForPostIds(ownedPosts.map(p=>p.id));
+  const ownedSignalByPost = {};
+  for(const p of ownedPosts){ const sg = commentSignal(ownedCommentsByPost[p.id]); if(sg) ownedSignalByPost[p.id]=sg; }
   // dedup near-duplicados (misma cuenta + mismo inicio de texto)
   const seen = new Set();
   cands = cands.filter(p => { const key=(p.username||'')+'|'+strip(p.text).slice(0,30); if(seen.has(key)) return false; seen.add(key); return true; }).slice(0,18);
   emit({type:'phase',msg:`${cands.length} piezas candidatas (${cfg.subjectName} + "${query}").`});
-  if(!cands.length) throw new Error(`No se encontraron piezas de ${cfg.subjectName} ligadas a "${query}" en la ventana.`);
+  if(!cands.length && !ownedPosts.length) throw new Error(`No se encontraron piezas de ${cfg.subjectName} ligadas a "${query}" en la ventana (ni reacción pública ni posts propios).`);
+  if(!cands.length) emit({type:'info', msg:`Sin piezas de reacción pública para "${cfg.subjectName}" + "${query}" en la ventana — se reportará como hallazgo de volumen nulo (hay posts propios disponibles).`});
 
   // 3) comentarios de las piezas top + señales de inflado
   const top = cands.slice(0,7);
@@ -206,10 +247,13 @@ export async function prepareEventReport({ apifyToken, query, from, to, subjectC
 
   // 4) contexto del último panorama (best-effort, solo para telón de fondo en el prompt)
   const ctx = await latestResumen(to, cfg.subjectName);
-  const prompt = buildPrompt({ query, from, to, cands, commentsByUrl, signalByUrl, ctx, cfg });
+  const prompt = buildPrompt({ query, from, to, cands, commentsByUrl, signalByUrl, ctx, cfg, ownedPosts, ownedCommentsByPost, ownedSignalByPost });
   emit({type:'info',msg:'Prompt listo. El agente debe redactar el analisis JSON y pasarlo a finalizeEventReportData.'});
 
   // cands se devuelve "limpio" (sin comentarios/señales embebidos) porque finalizeEventReportData
   // solo necesita url/platform/username/published_date/likes/comments_count/views por pieza.
-  return { prompt, cands, cfg, query, to };
+  // ownedPosts/ownedCommentsByPost se devuelven solo para trazabilidad/auditoría en el contexto
+  // guardado — finalize no los necesita (los cards de "redes_propias" ya vienen resueltos en el
+  // JSON que redacta el agente), pero así queda registro de qué comentarios reales respaldan esas citas.
+  return { prompt, cands, cfg, query, to, ownedPosts, ownedCommentsByPost };
 }
