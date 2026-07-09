@@ -54,20 +54,31 @@ const inDate   = (dateStr, from, to) => { if (!dateStr) return true; const d = d
 
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 async function upsertReport(themeKey, themeLabel, dateKey, subjectConfig) {
-  const { data: ex } = await supabase.from('reports').select('id').eq('date_key', dateKey).eq('theme_key', themeKey).limit(1);
+  // La fila de "reports" para (fecha, tema) debe ser única POR SUJETO — si no, dos sujetos
+  // distintos scrapeados el mismo día terminan compartiendo report_id y pisándose el subject_config.
+  let q = supabase.from('reports').select('id').eq('date_key', dateKey).eq('theme_key', themeKey);
+  if (subjectConfig?.subjectName) q = q.eq('subject_config->>subjectName', subjectConfig.subjectName);
+  const { data: ex } = await q.limit(1);
   if (ex?.length) {
-    // Refresca la config usada aunque el reporte ya existiera (resiliente si la columna aún no existe).
-    if (subjectConfig) await supabase.from('reports').update({ subject_config: subjectConfig }).eq('id', ex[0].id);
     return ex[0].id;
   }
   const base = { date_key: dateKey, theme_key: themeKey, theme_label: themeLabel, filename: `apify-${themeKey}-${dateKey}` };
-  let { data, error } = await supabase.from('reports')
+  const { data, error } = await supabase.from('reports')
     .insert(subjectConfig ? { ...base, subject_config: subjectConfig } : base)
     .select('id').single();
-  if (error && subjectConfig) {
-    ({ data, error } = await supabase.from('reports').insert(base).select('id').single());
+  if (error) {
+    // Si el insert con subject_config falla, NO caemos en silencio a insertar sin ella —
+    // eso deja subject_config en null y hace que toda lectura filtrada por sujeto (hasScraped,
+    // fetchWindowPosts) devuelva vacío para siempre, sin ningún error visible hasta mucho después
+    // ("0 piezas candidatas" sin explicación). Mejor fallar aquí mismo con un mensaje claro.
+    if (subjectConfig && /subject_config/i.test(error.message)) {
+      throw new Error(
+        `No se pudo guardar subject_config en "reports" (${error.message}). ` +
+        `A este Supabase le falta la columna: corre "alter table reports add column if not exists subject_config jsonb;" antes de reintentar.`
+      );
+    }
+    throw new Error(error.message);
   }
-  if (error) throw new Error(error.message);
   return data.id;
 }
 
@@ -104,12 +115,6 @@ const normFacebook = (items, from, to, isRelevant) => items.map(p => {
     likes: rx || +(p.like || p.likes || 0),
     comments_count: +(p.comments_count || p.commentsCount || 0),
     shares: +(p.reshare_count || p.shares || 0), retweets:0, views:0,
-    fb_like:  +(p.like || p.likeCount || 0),
-    fb_love:  +(p.love || p.loveCount || 0),
-    fb_haha:  +(p.haha || p.hahaCount || 0),
-    fb_wow:   +(p.wow  || p.wowCount  || 0),
-    fb_sad:   +(p.sad  || p.sadCount  || 0),
-    fb_angry: +(p.angry|| p.angryCount|| 0),
   };
 }).filter(p => p.text && p.url && inDate(p.published_date, from, to) && isRelevant(p.text));
 
@@ -153,22 +158,13 @@ const normOwnedInstagram = (items, ownedAccounts) => {
   })).filter(p => p.url);
 };
 
-const normOwnedFacebook = (items, subjectName) => items.slice(0, 5).map(p => {
-  const rx = p.reactions || p.reactionsBreakdown || {};
-  return {
-    platform:'facebook', username: p.authorName || subjectName,
-    text: p.text || p.message || '', url: p.permalink || p.url || '',
-    published_date: p.publishTimeIso || p.date || null,
-    likes: +(p.reactionCount || p.reactionsCount || 0),
-    comments_count: +(p.commentCount || 0), shares:0, retweets:0, views:0,
-    fb_like:  +(p.like  || rx.like  || p.likeCount  || 0),
-    fb_love:  +(p.love  || rx.love  || p.loveCount  || 0),
-    fb_haha:  +(p.haha  || rx.haha  || p.hahaCount  || 0),
-    fb_wow:   +(p.wow   || rx.wow   || p.wowCount   || 0),
-    fb_sad:   +(p.sad   || rx.sad   || p.sadCount   || 0),
-    fb_angry: +(p.angry || rx.angry || p.angryCount || 0),
-  };
-}).filter(p => p.url);
+const normOwnedFacebook = (items, subjectName) => items.slice(0, 5).map(p => ({
+  platform:'facebook', username: p.authorName || subjectName,
+  text: p.text || p.message || '', url: p.permalink || p.url || '',
+  published_date: p.publishTimeIso || p.date || null,
+  likes: +(p.reactionCount || p.reactionsCount || 0),
+  comments_count: +(p.commentCount || 0), shares:0, retweets:0, views:0,
+})).filter(p => p.url);
 
 const normOwnedTikTok = (items, ownedAccounts) => items
   .filter(p => !p.isPinned)
@@ -587,7 +583,12 @@ export async function runFullAnalysis({ apifyToken, aiKey, date, subjectConfig, 
   ];
 
   for (const { key, result, norm, label, cap } of nets) {
-    if (result.status === 'rejected') { summary.posts[key] = { error: result.reason?.message }; continue; }
+    if (result.status === 'rejected') {
+      const errMsg = result.reason?.message || String(result.reason);
+      summary.posts[key] = { error: errMsg };
+      emit({ type:'error', msg: `${key}: ${errMsg}` });
+      continue;
+    }
     const rawCount = Array.isArray(result.value) ? result.value.length : 0;
     const posts = norm(result.value);
     if (key === 'tiktok') await attachTikTokTranscripts(posts);
