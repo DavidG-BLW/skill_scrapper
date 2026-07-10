@@ -34,16 +34,16 @@ Variables de entorno necesarias:
 - `APIFY_TOKEN` — token personal de Apify. Solo lo requiere `prepare` si la ventana de fechas pedida no está ya scrapeada y en caché en Supabase.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` — un proyecto de Supabase ya creado (con sus tablas `reports`, `scraped_posts`, `scraped_comments` y la columna `subject_config jsonb` en `reports`, que aísla los datos de cada sujeto). El esquema se crea manualmente fuera de esta skill — el agente solo recibe las credenciales ya listas, nunca crea ni migra tablas. Supabase se usa para cachear los datos scrapeados por fecha+sujeto, así que volver a correr un reporte (o scrapear una ventana de varios días) no le vuelve a pagar a Apify por el mismo día dos veces.
 
-`OPENROUTER_API_KEY` **no se usa** en esta skill. El texto del reporte lo escribes tú, el agente que la invoca.
+`OPENROUTER_API_KEY` **no se usa** en esta skill y no debe pedirse — el texto del reporte lo escribes tú, el agente que la invoca.
 
 ### Cómo llegan las credenciales al agente
 
 Son secretos — nunca deben vivir dentro de `SKILL.md`, los scripts, ni nada que se suba a git. Resuélvelos en este orden, y detente en el primero que funcione:
 
-1. **Ya están en el entorno del proceso.** Si la sesión/shell del usuario ya exporta `APIFY_TOKEN`, `OPENROUTER_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (ej. definidas en su perfil del sistema operativo, o en un proceso padre), las llamadas a Bash/PowerShell las heredan automáticamente — no hay que hacer nada.
+1. **Ya están en el entorno del proceso.** Si la sesión/shell del usuario ya exporta `APIFY_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (ej. definidas en su perfil del sistema operativo, o en un proceso padre), las llamadas a Bash/PowerShell las heredan automáticamente — no hay que hacer nada.
 2. **Un archivo `.env` local junto a este SKILL.md.** Copia `.env.example` a `.env`, llena valores reales, e invoca los scripts con el cargador de env-file nativo de Node: `node --env-file=.env scripts/generate-event-report.js ...`. `.env` está en `.gitignore` — nunca lo quites de `.gitignore`, nunca hagas `cat`/lo imprimas de vuelta en el chat, nunca escribas su contenido en archivos de memoria ni en mensajes de commit.
 3. **Reusar el `.env` de otro proyecto.** Si las mismas credenciales ya existen en otra parte del workspace del usuario (ej. el `.env` de una app hermana), apunta `--env-file=` directamente a esa ruta en vez de duplicar los secretos en un segundo archivo.
-4. **Pregúntale al usuario.** Si nada de lo anterior resuelve, pregunta cuáles de las 4 variables faltan y cómo prefiere dártelas (pegar valores para escribir un `.env` local, o apuntar a un archivo ya existente). Nunca inventes, adivines, ni reutilices credenciales de ejemplo/placeholder como si fueran reales.
+4. **Pregúntale al usuario.** Si nada de lo anterior resuelve, pregunta cuáles de las 3 variables faltan (`APIFY_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`) y cómo prefiere dártelas (pegar valores para escribir un `.env` local, o apuntar a un archivo ya existente). Nunca pidas `OPENROUTER_API_KEY`. Nunca inventes, adivines, ni reutilices credenciales de ejemplo/placeholder como si fueran reales.
 
 Nunca imprimas valores completos de credenciales en respuestas, logs, ni mensajes de commit — al confirmar que una variable está definida, reporta solo que está presente (y opcionalmente su longitud), no su valor.
 
